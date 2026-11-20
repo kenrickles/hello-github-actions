@@ -62,8 +62,8 @@ python3 - <<'PY'
 from pathlib import Path
 from collections import Counter
 import json,re
-root=Path('project/lean')
-assert (root/'Main.lean').is_file(), 'Expected original lean/Main.lean missing'
+root=Path('project/lean/src')
+assert (root/'Main.lean').is_file(), 'Expected original lean/src/Main.lean missing'
 files=list(root.rglob('*.lean'))
 modules={'.'.join(p.relative_to(root).with_suffix('').parts):p for p in files}
 edges={}
