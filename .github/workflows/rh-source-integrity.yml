@@ -1,0 +1,19 @@
+name: Independent RH source integrity audit
+on:
+  push:
+    branches:
+      - rh-proof-audit-20261120
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out isolated audit branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check hardware and audit original archive
+        shell: bash
+        run: bash rh-proof-audit.sh
