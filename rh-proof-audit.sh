@@ -57,3 +57,55 @@ assert main_snippets, 'Could not locate expected Main.lean theorem declarations'
 print('PASS: archive SHA, file count, literal token scan, and Main.lean declarations checked.')
 print('NOTICE: this does NOT compile or kernel-check the RH proof.')
 PY
+echo '== Import closure and metaprogramming audit =='
+python3 - <<'PY'
+from pathlib import Path
+from collections import Counter
+import json,re
+root=Path('project/lean')
+assert (root/'Main.lean').is_file(), 'Expected original lean/Main.lean missing'
+files=list(root.rglob('*.lean'))
+modules={'.'.join(p.relative_to(root).with_suffix('').parts):p for p in files}
+edges={}
+meta=Counter()
+meta_examples=[]
+needle=re.compile(r'\b(addDecl|addAndCompile|modifyEnv|setEnv|allowUnsafeReducibility|run_cmd|run_tac)\b')
+for module,path in modules.items():
+    imports=[]
+    with path.open(encoding='utf-8',errors='replace') as fd:
+        for line_no,line in enumerate(fd,1):
+            line=line.strip()
+            if line.startswith('import '):
+                imports += line[7:].split()
+            for match in needle.finditer(line):
+                meta[match.group()] += 1
+                if len(meta_examples)<30:
+                    meta_examples.append(f'{path}:{line_no}:{line[:140]}')
+    edges[module]=[x for x in imports if x in modules]
+seen=set()
+pending=['Main']
+while pending:
+    node=pending.pop()
+    if node in seen:
+        continue
+    seen.add(node)
+    pending.extend(edges.get(node,()))
+not_reached=sorted(modules.keys()-seen)
+report={
+    'module_count':len(modules),
+    'internal_import_edges':sum(map(len,edges.values())),
+    'reachable_from_Main':len(seen),
+    'unreachable_modules_count':len(not_reached),
+    'unreachable_modules_sample':not_reached[:20],
+    'metaprogramming_token_counts':dict(meta),
+    'metaprogramming_examples':meta_examples,
+    'main_direct_internal_imports':edges.get('Main',[])
+}
+Path('rh-import-graph.json').write_text(json.dumps(report,indent=2))
+print(json.dumps(report,indent=2)[:10000])
+if not_reached:
+    print('WARNING: lexical import parser leaves modules unreachable; this is not a Lean kernel verdict.')
+else:
+    print('PASS: all original Lean files are in the lexical import closure of Main.')
+print('NOTICE: graph and metaprogramming inspection do NOT validate theorem correctness.')
+PY
