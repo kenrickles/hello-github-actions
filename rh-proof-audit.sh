@@ -109,3 +109,69 @@ else:
     print('PASS: all original Lean files are in the lexical import closure of Main.')
 print('NOTICE: graph and metaprogramming inspection do NOT validate theorem correctness.')
 PY
+
+echo '== Audit graph cycles and dangerous declarations =='
+python3 - <<'PY'
+from pathlib import Path
+from collections import Counter
+import re,json
+root=Path('project/lean/src')
+modules={'.'.join(p.relative_to(root).with_suffix('').parts):p for p in root.rglob('*.lean')}
+imports={}
+danger=Counter()
+samples={}
+patterns={
+ 'sorryAx':re.compile(r'\bsorryAx\b'),
+ 'Lean.ofReduceBool':re.compile(r'\b(?:Lean\.)?ofReduceBool\b'),
+ 'trustCompiler':re.compile(r'\btrustCompiler\b'),
+ 'debug.skipKernelTC':re.compile(r'\bdebug\.skipKernelTC\b'),
+ 'setEnv':re.compile(r'\bsetEnv\b'),
+ 'addDecl':re.compile(r'\baddDecl\b'),
+ 'run_cmd':re.compile(r'\brun_cmd\b'),
+ 'declare_syntax_cat':re.compile(r'\bdeclare_syntax_cat\b'),
+ 'macro_rules':re.compile(r'\bmacro_rules\b'),
+ 'axiom_command':re.compile(r'^\s*axiom\b'),
+ 'constant_command':re.compile(r'^\s*constant\b'),
+ 'theorem_False':re.compile(r'\btheorem\s+\S+\s*:\s*False\b')
+}
+for name,path in modules.items():
+    xs=[]
+    with path.open(encoding='utf-8',errors='replace') as fh:
+        for line_num,line in enumerate(fh,1):
+            if line.startswith('import '):
+                xs.extend([v for v in line[7:].split() if v in modules])
+            for label,pat in patterns.items():
+                if pat.search(line):
+                    danger[label]+=1
+                    samples.setdefault(label,[])
+                    if len(samples[label])<8:
+                        samples[label].append(f'{path.relative_to(root)}:{line_num}:{line.strip()[:130]}')
+    imports[name]=xs
+# Three-color DFS, iterative to avoid Python recursion limit.
+colors={}
+cycles=[]
+for node in modules:
+    if colors.get(node): continue
+    colors[node]=1
+    stack=[(node,iter(imports[node]))]
+    while stack:
+        n,it=stack[-1]
+        try: child=next(it)
+        except StopIteration:
+            colors[n]=2
+            stack.pop()
+            continue
+        state=colors.get(child,0)
+        if state==0:
+            colors[child]=1
+            stack.append((child,iter(imports[child])))
+        elif state==1 and len(cycles)<10:
+            cycles.append((n,child))
+result={'modules':len(modules),'cycles':cycles,'dangerous_or_meta_pattern_counts':dict(danger),'examples':samples}
+print(json.dumps(result,indent=2)[:12000])
+assert not cycles,'Internal import graph contains cycles'
+for key in ('sorryAx','Lean.ofReduceBool','trustCompiler','debug.skipKernelTC','axiom_command','constant_command','theorem_False'):
+    assert danger[key]==0,f'Potentially dangerous syntax: {key} = {danger[key]}'
+print('PASS: no internal import cycles and no listed dangerous declarations found by lexical search.')
+print('NOTICE: syntax matching is not a Lean parser, and neither this nor any earlier scan constitutes a kernel proof.')
+PY
